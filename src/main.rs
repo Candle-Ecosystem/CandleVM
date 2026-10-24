@@ -112,6 +112,10 @@ fn load_local_plugins(plugins: &mut Vec<PathBuf>) {
         return;
     };
 
+    let Ok(exe_path) = fs::canonicalize(exe_path) else {
+        return;
+    };
+
     let Some(exe_dir) = exe_path.parent() else {
         return;
     };
