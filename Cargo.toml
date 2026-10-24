@@ -1,0 +1,20 @@
+[package]
+name = "candlevm"
+version = "1.0.0"
+edition = "2024"
+description = "Candle Virtual Machine"
+license = "GPL-3.0-only"
+
+[features]
+default = ["cli"]
+cli = ["dep:clap"]
+
+[dependencies]
+clap = { version = "4.6.7", features = ["derive"], optional = true }
+libloading = "0.9.0"
+ctrlc = "3.5.2"
+
+[[bin]]
+name = "candlevm"
+path = "src/main.rs"
+required-features = ["cli"]
