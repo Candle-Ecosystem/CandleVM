@@ -164,6 +164,7 @@ jobs:
         run: |
           python - <<'PY'
           import os
+          import re
           from pathlib import Path
 
           tag = os.environ["TAG"]
@@ -179,6 +180,7 @@ jobs:
               filename = f"candlevm-{tag}-{target}.zip"
               if filename not in checksums:
                   raise SystemExit(f"Missing checksum: {filename}")
+
               url = (
                   "https://github.com/Candle-Ecosystem/CandleVM/"
                   f"releases/download/{tag}/{filename}"
@@ -190,7 +192,7 @@ jobs:
           linux_arm = asset("linux-aarch64-glibc")
           linux_intel = asset("linux-x86_64-glibc")
 
-          formula = '''class Candlevm < Formula
+          template = '''class __CLASS__ < Formula
             desc "Language-independent bytecode virtual machine for the Candle ecosystem"
             homepage "https://candle.nozyx.dev"
             version "__VERSION__"
@@ -218,7 +220,7 @@ jobs:
             def install
               prefix.install Dir["*"]
               (prefix/"plugins").mkpath
-              bin.install_symlink prefix/"candlevm"
+              bin.install_symlink prefix/"candlevm" => "__EXECUTABLE__"
             end
 
             test do
@@ -240,28 +242,59 @@ jobs:
               "__LINUX_INTEL_SHA__": linux_intel[1],
           }
 
-          for key, value in replacements.items():
-              formula = formula.replace(key, value)
+          def generate_formula(class_name, executable_name):
+              formula = template
+              values = {
+                  **replacements,
+                  "__CLASS__": class_name,
+                  "__EXECUTABLE__": executable_name,
+              }
+              for key, value in values.items():
+                  formula = formula.replace(key, value)
+              return formula
 
-          destination = Path("homebrew-tap/Formula/candlevm.rb")
-          destination.write_text(formula)
-          print(f"Generated formula for CandleVM {version}")
+          formula_dir = Path("homebrew-tap/Formula")
+          formula_dir.mkdir(parents=True, exist_ok=True)
+
+          # Latest version: brew install candlevm
+          (formula_dir / "candlevm.rb").write_text(
+              generate_formula("Candlevm", "candlevm")
+          )
+
+          # Versioned release: brew install candlevm@1.0.1
+          class_suffix = re.sub(r"[^A-Za-z0-9]", "", version)
+          versioned_class = f"CandlevmAT{class_suffix}"
+          versioned_path = formula_dir / f"candlevm@{version}.rb"
+
+          versioned_path.write_text(
+              generate_formula(
+                  versioned_class,
+                  f"candlevm-{version}"
+              )
+          )
+
+          print(f"Generated latest formula for CandleVM {version}")
+          print(f"Generated versioned formula: {versioned_path}")
           PY
+
 
       - name: Commit and push formula
         working-directory: homebrew-tap
         env:
           TAG: ${{ github.ref_name }}
         run: |
+          VERSION="${TAG#v}"
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add Formula/candlevm.rb
+          git add "Formula/candlevm@${VERSION}.rb"
 
           if git diff --cached --quiet; then
-            echo "Formula is already up to date."
+            echo "Formulae are already up to date."
             exit 0
           fi
 
-          git commit -m "chore: update candlevm formula for ${TAG}"
+          git commit -m "chore: update candlevm formulae for ${TAG}"
           git push origin main
