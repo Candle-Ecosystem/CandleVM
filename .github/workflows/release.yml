@@ -131,3 +131,137 @@ jobs:
             release-assets/SHA256SUMS.txt
           fail_on_unmatched_files: true
           generate_release_notes: true
+
+  update-homebrew-tap:
+    name: Update Homebrew Formula
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Download release checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/release"
+          gh release download "$GITHUB_REF_NAME" \
+            --repo Candle-Ecosystem/CandleVM \
+            --pattern SHA256SUMS.txt \
+            --dir "$RUNNER_TEMP/release"
+
+      - name: Checkout Homebrew tap
+        uses: actions/checkout@v4
+        with:
+          repository: Candle-Ecosystem/homebrew-candle
+          ref: main
+          path: homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+      - name: Generate formula
+        env:
+          TAG: ${{ github.ref_name }}
+          CHECKSUM_FILE: ${{ runner.temp }}/release/SHA256SUMS.txt
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          tag = os.environ["TAG"]
+          version = tag.removeprefix("v")
+          checksums = {}
+
+          for line in Path(os.environ["CHECKSUM_FILE"]).read_text().splitlines():
+              if line.strip():
+                  digest, filename = line.split(maxsplit=1)
+                  checksums[filename.lstrip("*")] = digest
+
+          def asset(target):
+              filename = f"candlevm-{tag}-{target}.zip"
+              if filename not in checksums:
+                  raise SystemExit(f"Missing checksum: {filename}")
+              url = (
+                  "https://github.com/Candle-Ecosystem/CandleVM/"
+                  f"releases/download/{tag}/{filename}"
+              )
+              return url, checksums[filename]
+
+          mac_arm = asset("macos-aarch64")
+          mac_intel = asset("macos-x86_64")
+          linux_arm = asset("linux-aarch64-glibc")
+          linux_intel = asset("linux-x86_64-glibc")
+
+          formula = '''class Candlevm < Formula
+            desc "Language-independent bytecode virtual machine for the Candle ecosystem"
+            homepage "https://candle.nozyx.dev"
+            version "__VERSION__"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "__MAC_ARM_URL__"
+                sha256 "__MAC_ARM_SHA__"
+              else
+                url "__MAC_INTEL_URL__"
+                sha256 "__MAC_INTEL_SHA__"
+              end
+            end
+
+            on_linux do
+              if Hardware::CPU.arm?
+                url "__LINUX_ARM_URL__"
+                sha256 "__LINUX_ARM_SHA__"
+              else
+                url "__LINUX_INTEL_URL__"
+                sha256 "__LINUX_INTEL_SHA__"
+              end
+            end
+
+            def install
+              prefix.install Dir["*"]
+              (prefix/"plugins").mkpath
+              bin.install_symlink prefix/"candlevm"
+            end
+
+            test do
+              assert_predicate prefix/"candlevm", :executable?
+              assert_predicate prefix/"plugins", :directory?
+            end
+          end
+          '''
+
+          replacements = {
+              "__VERSION__": version,
+              "__MAC_ARM_URL__": mac_arm[0],
+              "__MAC_ARM_SHA__": mac_arm[1],
+              "__MAC_INTEL_URL__": mac_intel[0],
+              "__MAC_INTEL_SHA__": mac_intel[1],
+              "__LINUX_ARM_URL__": linux_arm[0],
+              "__LINUX_ARM_SHA__": linux_arm[1],
+              "__LINUX_INTEL_URL__": linux_intel[0],
+              "__LINUX_INTEL_SHA__": linux_intel[1],
+          }
+
+          for key, value in replacements.items():
+              formula = formula.replace(key, value)
+
+          destination = Path("homebrew-tap/Formula/candlevm.rb")
+          destination.write_text(formula)
+          print(f"Generated formula for CandleVM {version}")
+          PY
+
+      - name: Commit and push formula
+        working-directory: homebrew-tap
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add Formula/candlevm.rb
+
+          if git diff --cached --quiet; then
+            echo "Formula is already up to date."
+            exit 0
+          fi
+
+          git commit -m "chore: update candlevm formula for ${TAG}"
+          git push origin main
