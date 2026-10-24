@@ -3,7 +3,11 @@ name = "candlevm"
 version = "1.0.1"
 edition = "2024"
 description = "Candle Virtual Machine"
+readme = "README.md"
 license = "GPL-3.0-only"
+documentation = "https://candle.nozyx.dev/docs/1/candlevm/plugins"
+homepage = "https://candle.nozyx.dev"
+repository = "https://github.com/candle-ecosystem/candlevm"
 
 [features]
 default = ["cli"]
